@@ -1,0 +1,87 @@
+# Define the name and location of the resource group, virtual network, and subnet where the storage account will be located
+locals {
+  resource_group_name = "example-resource-group"
+  location = "eastus"
+  virtual_network_name = "example-vnet"
+  subnet_name = "example-subnet"
+}
+
+# Get the ID of the existing subnet where the storage account will be located
+data "azurerm_subnet" "existing" {
+  name                 = local.subnet_name
+  virtual_network_name = local.virtual_network_name
+  resource_group_name  = local.resource_group_name
+}
+
+# Create a storage account with a private endpoint
+resource "azurerm_storage_account" "example" {
+  name                     = "examplestorageaccount"
+  resource_group_name      = local.resource_group_name
+  location                 = local.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+
+  network_rules {
+    default_action = "Deny"
+    virtual_network_subnet_ids = [
+      data.azurerm_subnet.existing.id
+    ]
+  }
+
+  # Enable private endpoint
+  private_endpoint_connection {
+    name                      = "storage-endpoint"
+    is_manual_connection      = false
+    private_link_service_id   = azurerm_storage_account.example.id
+    request_message           = "Please approve the private endpoint connection request"
+    private_endpoint_id       = azurerm_private_endpoint.example.id
+  }
+}
+
+# Create a private endpoint for the storage account
+resource "azurerm_private_endpoint" "example" {
+  name                = "storage-endpoint"
+  location            = local.location
+  resource_group_name = local.resource_group_name
+  subnet_id           = data.azurerm_subnet.existing.id
+
+  private_service_connection {
+    name                           = "storage-connection"
+    private_connection_resource_id = azurerm_storage_account.example.id
+    is_manual_connection           = false
+  }
+
+  # Define the required network policies
+  network_interfaces {
+    id = azurerm_network_interface.example.id
+
+    # Allow traffic to the storage account on port 443 (HTTPS)
+    # Deny all other inbound and outbound traffic by default
+    ip_configurations {
+      name                          = "privateEndpointConfig"
+      private_ip_address_allocation = "Dynamic"
+      subnet_id                     = data.azurerm_subnet.existing.id
+      primary                       = true
+      private_ip_address_version    = "IPv4"
+      load_balancer_backend_address_pools_ids = []
+      load_balancer_inbound_nat_rules_ids    = []
+    }
+  }
+}
+
+# Create a network interface for the private endpoint
+resource "azurerm_network_interface" "example" {
+  name                = "private-endpoint-nic"
+  location            = local.location
+  resource_group_name = local.resource_group_name
+
+  ip_configurations {
+    name                          = "privateEndpointConfig"
+    private_ip_address_allocation = "Dynamic"
+    subnet_id                     = data.azurerm_subnet.existing.id
+    primary                       = true
+    private_ip_address_version    = "IPv4"
+    load_balancer_backend_address_pools_ids = []
+    load_balancer_inbound_nat_rules_ids    = []
+  }
+}
